@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.geo import GeoPrompt, GeoReport, GeoRun, MentionResult, ProviderResult
 from app.models.merchant import Merchant
 from app.services import citation_service
+from app.services import evidence_verification_service as verify_svc
 from app.services import merchant_profile_service as merchant_svc
 
 WEIGHT_MENTION = 0.7
@@ -159,11 +160,16 @@ async def compute_and_store(
     citations = await citation_service.fetch_run_citations(session, run.id)
     citation_report = citation_service.build_citation_report(citations)
 
+    # Evidence verifiability (P3.2); None when no claims were verified for this run.
+    statuses = await verify_svc.fetch_run_verification_statuses(session, run.id)
+    evidence_rate = verify_svc.compute_evidence_rate(statuses)
+
     report_json = {
         **metrics,
         "merchant": {"name": merchant.name, "city": merchant.city, "category": merchant.category},
         "run_id": str(run.id),
         "completeness": completeness.score,
+        "evidence_rate": evidence_rate,
         **citation_report,  # citation_ranking / source_investment / article_titles
         "recommendations": build_recommendations(metrics, completeness.suggestions),
     }
@@ -173,7 +179,7 @@ async def compute_and_store(
         merchant_id=merchant.id,
         geo_score=metrics["geo_score"],
         mention_rate=metrics["overall"]["mention_rate"],
-        evidence_rate=None,  # P3
+        evidence_rate=evidence_rate,
         positive_rate=metrics["overall"]["positive_rate"],
         rank_score=metrics["overall"]["exposure_avg"],
         report_json=report_json,

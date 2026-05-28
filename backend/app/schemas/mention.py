@@ -19,3 +19,15 @@ class MentionResultOut(BaseModel):
 
 class ExtractResponse(BaseModel):
     enqueued: int
+
+
+class VerificationResultOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    provider_result_id: uuid.UUID
+    claim_text: str | None = None
+    verification_status: str | None = None
+    evidence_source_id: uuid.UUID | None = None
+    confidence: float | None = None
+    explanation: str | None = None

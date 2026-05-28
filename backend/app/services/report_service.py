@@ -154,7 +154,7 @@ def render_html(report: dict, run_created_at: str = "") -> str:
   .score {{ text-align:center; }}
   .score .num {{ font-size:48px; font-weight:700; color:var(--brand); line-height:1; }}
   .score .grade {{ color:#86909c; font-size:13px; margin-top:6px; }}
-  .cards {{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:20px 0; }}
+  .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin:20px 0; }}
   .card {{ background:#fff; border-radius:12px; padding:18px; box-shadow:0 1px 4px rgba(0,0,0,.06); }}
   .card .k {{ color:#86909c; font-size:13px; }}
   .card .v {{ font-size:24px; font-weight:700; margin-top:6px; }}
@@ -186,6 +186,7 @@ def render_html(report: dict, run_created_at: str = "") -> str:
     <div class="card"><div class="k">AI 提及率</div><div class="v">{_pct(overall.get('mention_rate', 0))}</div></div>
     <div class="card"><div class="k">曝光/排名加权</div><div class="v">{_pct(overall.get('exposure_avg', 0))}</div></div>
     <div class="card"><div class="k">正向描述率</div><div class="v">{_pct(overall.get('positive_rate', 0))}</div></div>
+    <div class="card"><div class="k">证据可验证率</div><div class="v">{_pct(report['evidence_rate']) if report.get('evidence_rate') is not None else '—'}</div></div>
     <div class="card"><div class="k">资料完整度</div><div class="v">{report.get('completeness', 0)}</div></div>
   </div>
 

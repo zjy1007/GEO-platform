@@ -8,7 +8,8 @@ from app.core.arq import get_arq_pool
 from app.core.database import get_session
 from app.core.security import TenantContext, get_tenant
 from app.schemas.geo_run import GeoRunCreate, GeoRunOut, GeoRunProgress, ProviderResultOut
-from app.schemas.mention import ExtractResponse, MentionResultOut
+from app.schemas.mention import ExtractResponse, MentionResultOut, VerificationResultOut
+from app.services import evidence_verification_service as verify_svc
 from app.services import geo_run_service as svc
 from app.services import mention_extraction_service as mention_svc
 from app.services import merchant_profile_service as merchant_svc
@@ -111,3 +112,31 @@ async def list_geo_run_mentions(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     rows = await mention_svc.list_mentions(session, run_id)
     return [MentionResultOut.model_validate(r) for r in rows]
+
+
+@router.post("/{run_id}/verify", response_model=ExtractResponse, status_code=status.HTTP_202_ACCEPTED)
+async def verify_run_claims(
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _: TenantContext = Depends(get_tenant),
+    pool: ArqRedis = Depends(get_arq_pool),
+) -> ExtractResponse:
+    """Enqueue claim split + evidence verification for this run's not-yet-verified answers."""
+    if await svc.get_run(session, run_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+    pending = await verify_svc.pending_verify_result_ids(session, run_id)
+    for pr_id in pending:
+        await pool.enqueue_job("verify_claims_job", {"provider_result_id": str(pr_id)})
+    return ExtractResponse(enqueued=len(pending))
+
+
+@router.get("/{run_id}/verifications", response_model=list[VerificationResultOut])
+async def list_geo_run_verifications(
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _: TenantContext = Depends(get_tenant),
+) -> list[VerificationResultOut]:
+    if await svc.get_run(session, run_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+    rows = await verify_svc.list_verifications(session, run_id)
+    return [VerificationResultOut.model_validate(r) for r in rows]

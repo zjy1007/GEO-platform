@@ -6,7 +6,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.workers.jobs import extract_mention_job, run_prompt_job
+from app.workers.jobs import extract_mention_job, run_prompt_job, verify_claims_job
 
 
 async def ping(ctx, value: str = "pong") -> str:
@@ -18,7 +18,7 @@ async def startup(ctx) -> None:
 
 
 class WorkerSettings:
-    functions = [run_prompt_job, extract_mention_job, ping]
+    functions = [run_prompt_job, extract_mention_job, verify_claims_job, ping]
     on_startup = startup
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     max_jobs = settings.worker_max_jobs

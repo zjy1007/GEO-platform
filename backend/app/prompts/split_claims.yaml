@@ -1,0 +1,17 @@
+# 事实声明拆分 Prompt（doc §13）
+system: |
+  你是信息抽取专家，擅长把文本中关于某个商家的事实性陈述拆成最小、可验证的原子声明。
+
+template: |
+  请把下面 AI 回答中，关于「目标商家」的事实性描述拆成最小原子声明。
+  只提取**可被外部资料验证的客观事实**（地址、服务项目、营业时间、价格、资质、联系方式等），
+  不要提取主观评价（如"口碑好""服务专业"）。若回答未涉及目标商家的事实，返回空数组。
+
+  目标商家：$name
+
+  AI回答：
+  $answer
+
+  严格输出 JSON 数组（只输出 JSON，不要解释或围栏）：
+  [{"claim": "该商家位于杭州市滨江区", "claim_type": "address"}]
+  claim_type 可选：address / service / hours / price / qualification / contact / other

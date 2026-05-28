@@ -13,10 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.geo import GeoPrompt, GeoRun, MentionResult, ProviderResult
+from app.models.geo import GeoPrompt, GeoRun, MentionResult, ProviderResult, VerificationResult
 from app.models.merchant import Merchant
 from app.providers.base import LLMRequest, LLMResponse
 from app.providers.factory import build_channel
+from app.services import evidence_service as evidence_svc
+from app.services import evidence_verification_service as verify_svc
 from app.services import mention_extraction_service as mention_svc
 from app.workers.rate_limit import limiter
 
@@ -127,5 +129,33 @@ async def extract_mention_job(ctx: dict, payload: dict) -> dict:
             await session.commit()
         except Exception as e:  # noqa: BLE001 — record and continue
             log.warning("mention extraction failed for %s: %s", pr_id, e)
+            return {"status": "error", "reason": str(e)}
+    return {"status": "ok"}
+
+
+async def verify_claims_job(ctx: dict, payload: dict) -> dict:
+    """Split + verify claims for one provider_result against the merchant's evidence (P3.2)."""
+    pr_id = UUID(payload["provider_result_id"])
+    async with SessionLocal() as session:
+        pr = await session.get(ProviderResult, pr_id)
+        if pr is None or pr.status != "ok" or not pr.answer_text:
+            return {"status": "skipped"}
+        already = (
+            await session.execute(
+                select(VerificationResult.id).where(VerificationResult.provider_result_id == pr_id)
+            )
+        ).first()
+        if already:
+            return {"status": "exists"}
+
+        run = await session.get(GeoRun, pr.run_id)
+        merchant = await session.get(Merchant, run.merchant_id)
+        evidences = await evidence_svc.list_sources(session, merchant.id)
+        try:
+            channel = build_channel(settings.analysis_provider, "api")
+            await verify_svc.verify_answer(session, pr, merchant, evidences, channel)
+            await session.commit()
+        except Exception as e:  # noqa: BLE001 — record and continue
+            log.warning("claim verification failed for %s: %s", pr_id, e)
             return {"status": "error", "reason": str(e)}
     return {"status": "ok"}
