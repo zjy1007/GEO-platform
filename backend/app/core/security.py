@@ -18,8 +18,8 @@ class TenantContext:
 
 
 async def require_auth(authorization: str | None = Header(default=None)) -> None:
-    # When no token is configured (local dev), auth is open.
-    if settings.api_token is None:
+    # When no token is configured (None or empty, e.g. local dev), auth is open.
+    if not settings.api_token:
         return
     expected = f"Bearer {settings.api_token}"
     if authorization != expected:
