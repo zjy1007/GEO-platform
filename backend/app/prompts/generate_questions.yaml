@@ -1,0 +1,31 @@
+# 问题生成 Prompt（doc §13 + §二 双标签：mode organic/diagnostic × phase decision/doubt）
+system: |
+  你是本地生活服务搜索用户行为分析专家，熟悉真实用户在 AI 助手里的提问习惯。
+
+template: |
+  请生成 $count 个【$phase_label】场景下，真实用户可能在 AI 助手里提出的问题。
+  $mode_guidance
+  $phase_guidance
+  要求：
+  1. 问题要自然、口语化，符合真实用户搜索习惯，不要暴露这是测评任务。
+  2. 覆盖品类推荐、服务场景、价格咨询、对比选择、信任判断等不同意图。
+  3. 严格输出 JSON 数组，每个元素形如：
+     {"question": "问题内容", "scenario_type": "category_recommendation", "intent": "意图简述"}
+  4. 只输出 JSON 数组本身，不要任何额外说明或 Markdown 围栏。
+
+  行业：$category
+  城市：$city
+  区域：$district
+  核心服务：$services$merchant_line
+
+mode_guidance:
+  organic: 不要在问题中出现任何具体商家或品牌名称，要像还不知道有哪些商家的真实用户那样，按品类、区域、场景来发问。
+  diagnostic: 可以围绕目标商家展开，包含直接搜索该品牌名的问题。
+
+phase_guidance:
+  decision: 这些问题代表用户处于正向选择/决策阶段，关注"哪家好""推荐""值得去""口碑好"。
+  doubt: 这些问题代表用户处于负面质疑/排雷阶段，关注"哪家口碑差""被投诉""避雷""不靠谱""有纠纷"。
+
+phase_label:
+  decision: 品牌决策期
+  doubt: 负面质疑期
