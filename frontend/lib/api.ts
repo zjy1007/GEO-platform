@@ -126,6 +126,9 @@ export interface ProviderResultOut {
   completion_tokens?: number | null;
   status?: string | null;
   created_at?: string | null;
+  prompt_text?: string | null;
+  prompt_phase?: string | null;
+  prompt_mode?: string | null;
 }
 
 export interface MentionResultOut {
@@ -142,6 +145,44 @@ export interface MentionResultOut {
 
 export interface ExtractResponse {
   enqueued: number;
+}
+
+export type SourceType =
+  | "official_website"
+  | "user_upload"
+  | "map"
+  | "review"
+  | "news"
+  | "social"
+  | "other";
+
+export interface EvidenceSourceIn {
+  source_type?: SourceType;
+  url?: string | null;
+  title?: string | null;
+  text?: string | null;
+}
+
+export interface EvidenceSourceOut {
+  id: string;
+  merchant_id: string;
+  source_type?: string | null;
+  url?: string | null;
+  title?: string | null;
+  content_text?: string | null;
+  trust_level?: number | null;
+  retrieved_at?: string | null;
+  content_hash?: string | null;
+}
+
+export interface VerificationResultOut {
+  id: string;
+  provider_result_id: string;
+  claim_text?: string | null;
+  verification_status?: string | null;
+  evidence_source_id?: string | null;
+  confidence?: number | null;
+  explanation?: string | null;
 }
 
 export interface GeoReportOut {
@@ -271,4 +312,16 @@ export const api = {
     apiFetch<GeoReportOut>(`/reports/${runId}/generate`, { method: "POST" }),
   getReport: (runId: string) => apiFetch<GeoReportOut>(`/reports/${runId}`),
   reportHtmlUrl: (runId: string) => `${API_BASE}/reports/${runId}/html`,
+
+  listEvidence: (merchantId: string) =>
+    apiFetch<EvidenceSourceOut[]>(`/merchants/${merchantId}/evidence`),
+  addEvidence: (merchantId: string, payload: EvidenceSourceIn) =>
+    apiFetch<EvidenceSourceOut>(`/merchants/${merchantId}/evidence`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  verifyRun: (runId: string) =>
+    apiFetch<ExtractResponse>(`/geo-runs/${runId}/verify`, { method: "POST" }),
+  runVerifications: (runId: string) =>
+    apiFetch<VerificationResultOut[]>(`/geo-runs/${runId}/verifications`),
 };

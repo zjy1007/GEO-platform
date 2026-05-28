@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Card,
   Button,
@@ -20,6 +21,7 @@ import {
   PlayCircleOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  EyeOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -332,6 +334,11 @@ export default function EvalSection({ merchantId }: { merchantId: string }) {
                 >
                   生成报告
                 </Button>
+                {runId && (
+                  <Link href={`/runs/${runId}`}>
+                    <Button icon={<EyeOutlined />}>查看 AI 原始回答详情 →</Button>
+                  </Link>
+                )}
               </Space>
             )}
           </>

@@ -18,6 +18,7 @@ import ProfileSection from "./ProfileSection";
 import QualitySection from "./QualitySection";
 import PromptsSection from "./PromptsSection";
 import EvalSection from "./EvalSection";
+import EvidenceSection from "./EvidenceSection";
 
 export default function MerchantDetailPage() {
   const params = useParams<{ id: string }>();
@@ -99,6 +100,11 @@ export default function MerchantDetailPage() {
                   key: "eval",
                   label: "测评",
                   children: <EvalSection merchantId={id} />,
+                },
+                {
+                  key: "evidence",
+                  label: "证据中心",
+                  children: <EvidenceSection merchantId={id} />,
                 },
               ]}
             />
