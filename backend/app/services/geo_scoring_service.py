@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.geo import GeoPrompt, GeoReport, GeoRun, MentionResult, ProviderResult
 from app.models.merchant import Merchant
 from app.services import citation_service
+from app.services import competitor_service
 from app.services import evidence_verification_service as verify_svc
 from app.services import merchant_profile_service as merchant_svc
 
@@ -31,10 +32,6 @@ def exposure_score(rank: int | None, is_mentioned: bool) -> float:
     if rank > MAX_RANK or rank < 1:
         return 0.0
     return round((MAX_RANK - rank + 1) / MAX_RANK, 4)
-
-
-def _is_target(brand: str, target_names: list[str]) -> bool:
-    return any(t and (t == brand or t in brand or brand in t) for t in target_names if t)
 
 
 def _group_metrics(rows: list[dict]) -> dict:
@@ -70,21 +67,7 @@ def aggregate_metrics(rows: list[dict], target_names: list[str]) -> dict:
         {"provider": p, "phase": ph, **_group_metrics(g)} for (p, ph), g in sorted(buckets.items())
     ]
 
-    total = overall["total"]
-    counts: dict[str, int] = {}
-    for r in rows:
-        for b in r["mentioned_brands"] or []:
-            name = b.get("brand") if isinstance(b, dict) else None
-            if name:
-                counts[name] = counts.get(name, 0) + 1
-    competitors = sorted(
-        (
-            {"brand": n, "appearances": c, "rate": round(c / total, 4) if total else 0.0,
-             "is_target": _is_target(n, target_names)}
-            for n, c in counts.items()
-        ),
-        key=lambda x: -x["appearances"],
-    )
+    competitors = competitor_service.aggregate_competitors(rows, target_names)
 
     return {
         "geo_score": geo_score,
