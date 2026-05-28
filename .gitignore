@@ -1,0 +1,32 @@
+# env / secrets
+.env
+*.env
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# node / next
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+
+# data / artifacts
+pgdata/
+miniodata/
+*.log
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# playwright account profiles (account pool, P2 — never commit login state)
+backend/.playwright_profiles/
