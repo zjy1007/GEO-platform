@@ -53,3 +53,7 @@ class ProviderResultOut(BaseModel):
     completion_tokens: int | None = None
     status: str | None = None
     created_at: datetime | None = None
+    # Joined from GeoPrompt — optional so old callers stay compatible.
+    prompt_text: str | None = None
+    prompt_phase: str | None = None
+    prompt_mode: str | None = None

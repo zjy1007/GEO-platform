@@ -7,10 +7,12 @@ for the route to enqueue. build_jobs is pure and unit-tested.
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.geo import GeoPrompt, GeoRun, ProviderResult
 from app.providers.config import get_registry
+from app.schemas.geo_run import ProviderResultOut
 
 
 def build_jobs(
@@ -107,12 +109,23 @@ async def mark_queued(session: AsyncSession, run: GeoRun) -> None:
 
 async def list_results(
     session: AsyncSession, run_id: uuid.UUID, limit: int = 200, offset: int = 0
-) -> list[ProviderResult]:
+) -> list[ProviderResultOut]:
+    prompt_alias = aliased(GeoPrompt)
     stmt = (
-        select(ProviderResult)
+        select(ProviderResult, prompt_alias)
+        .outerjoin(prompt_alias, ProviderResult.prompt_id == prompt_alias.id)
         .where(ProviderResult.run_id == run_id)
         .order_by(ProviderResult.created_at.desc())
         .limit(limit)
         .offset(offset)
     )
-    return list((await session.execute(stmt)).scalars().all())
+    rows = (await session.execute(stmt)).all()
+    results = []
+    for pr, gp in rows:
+        out = ProviderResultOut.model_validate(pr)
+        if gp is not None:
+            out.prompt_text = gp.prompt_text
+            out.prompt_phase = gp.phase
+            out.prompt_mode = gp.mode
+        results.append(out)
+    return results

@@ -82,8 +82,7 @@ async def list_geo_run_results(
 ) -> list[ProviderResultOut]:
     if await svc.get_run(session, run_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
-    rows = await svc.list_results(session, run_id, limit=limit, offset=offset)
-    return [ProviderResultOut.model_validate(r) for r in rows]
+    return await svc.list_results(session, run_id, limit=limit, offset=offset)
 
 
 @router.post("/{run_id}/extract", response_model=ExtractResponse, status_code=status.HTTP_202_ACCEPTED)
