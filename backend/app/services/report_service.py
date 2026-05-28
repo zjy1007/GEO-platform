@@ -91,6 +91,38 @@ def _competitor_table(competitors: list[dict]) -> str:
     )
 
 
+_PRIORITY_TIER = {"high": "第一优先级", "medium": "第二优先级", "low": "第三优先级"}
+
+
+def _citation_section(ranking: list[dict], investment: list[dict]) -> str:
+    if not ranking and not investment:
+        return ("<div class='note'>该板块需账号池（Web 渠道）联网搜索引用源数据，"
+                "将在 P2 账号池接入后填充。</div>")
+    parts = []
+    if ranking:
+        trs = "".join(
+            f"<tr><td>{i}</td><td>{escape(r['label'])}</td><td>{r['count']}</td><td>{_pct(r['rate'])}</td></tr>"
+            for i, r in enumerate(ranking, 1)
+        )
+        parts.append(
+            "<h3 class='sub'>引用源平台排行榜</h3>"
+            "<table><thead><tr><th>#</th><th>来源</th><th>被引用次数</th><th>占比</th></tr></thead>"
+            f"<tbody>{trs}</tbody></table>"
+        )
+    if investment:
+        trs = "".join(
+            f"<tr><td>{escape(s['label'])}</td><td>{s['percentage']}%</td>"
+            f"<td>{_PRIORITY_TIER.get(s['priority'], s['priority'])}</td></tr>"
+            for s in investment
+        )
+        parts.append(
+            "<h3 class='sub'>信源投放建议</h3>"
+            "<table><thead><tr><th>建议投放来源</th><th>建议占比</th><th>优先级</th></tr></thead>"
+            f"<tbody>{trs}</tbody></table>"
+        )
+    return "".join(parts)
+
+
 def _recommendations(recs: list[dict]) -> str:
     items = [
         f"<li><span class='prio prio-{r['priority']}'>{_PRIORITY_LABEL.get(r['priority'], r['priority'])}</span>"
@@ -128,6 +160,8 @@ def render_html(report: dict, run_created_at: str = "") -> str:
   .card .v {{ font-size:24px; font-weight:700; margin-top:6px; }}
   section {{ background:#fff; border-radius:12px; padding:22px 24px; margin:16px 0; box-shadow:0 1px 4px rgba(0,0,0,.06); }}
   section h2 {{ font-size:16px; margin:0 0 14px; padding-left:10px; border-left:4px solid var(--brand); }}
+  h3.sub {{ font-size:14px; color:#4e5969; margin:18px 0 8px; }}
+  h3.sub:first-of-type {{ margin-top:0; }}
   table {{ width:100%; border-collapse:collapse; font-size:14px; }}
   th,td {{ text-align:left; padding:9px 10px; border-bottom:1px solid #eef0f3; }}
   th {{ color:#86909c; font-weight:500; background:#fafbfc; }}
@@ -159,7 +193,7 @@ def render_html(report: dict, run_created_at: str = "") -> str:
   <section><h2>决策期 vs 负面质疑期</h2>{_phase_compare_table(report.get('by_phase', {}))}</section>
   <section><h2>竞品可见度对比</h2>{_competitor_table(report.get('competitors', []))}</section>
   <section><h2>引用源平台排行榜 / 信源投放建议</h2>
-    <div class="note">该板块需账号池（Web 渠道）联网搜索引用源数据，将在 P2 账号池接入后填充。</div></section>
+    {_citation_section(report.get('citation_ranking', []), report.get('source_investment', []))}</section>
   <section><h2>优化建议</h2>{_recommendations(report.get('recommendations', []))}</section>
 
   <footer>本报告当前为 API 渠道「模型记忆」口径；真实曝光率与引用源数据在 P2 账号池接入后提供。</footer>

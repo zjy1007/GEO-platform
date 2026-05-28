@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.geo import GeoPrompt, GeoReport, GeoRun, MentionResult, ProviderResult
 from app.models.merchant import Merchant
+from app.services import citation_service
 from app.services import merchant_profile_service as merchant_svc
 
 WEIGHT_MENTION = 0.7
@@ -153,13 +154,17 @@ async def compute_and_store(
     completeness = merchant_svc.compute_completeness(
         {f: getattr(merchant, f, None) for f in merchant_svc._FIELD_WEIGHTS}
     )
+
+    # Citation blocks come from account-pool (web channel) data; empty until P2 scraping runs.
+    citations = await citation_service.fetch_run_citations(session, run.id)
+    citation_report = citation_service.build_citation_report(citations)
+
     report_json = {
         **metrics,
         "merchant": {"name": merchant.name, "city": merchant.city, "category": merchant.category},
         "run_id": str(run.id),
         "completeness": completeness.score,
-        "citation_ranking": [],  # account pool (P2)
-        "source_investment": [],  # account pool (P2)
+        **citation_report,  # citation_ranking / source_investment / article_titles
         "recommendations": build_recommendations(metrics, completeness.suggestions),
     }
 
