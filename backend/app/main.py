@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import geo_runs, health, merchants, prompts, reports
+from app.api import evidence, geo_runs, health, merchants, prompts, reports
 from app.core.arq import create_arq_pool
 from app.core.config import settings
 from app.core.logging import TraceIdMiddleware, setup_logging
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(prompts.router, prefix=settings.api_prefix)
     app.include_router(geo_runs.router, prefix=settings.api_prefix)
     app.include_router(reports.router, prefix=settings.api_prefix)
+    app.include_router(evidence.router, prefix=settings.api_prefix)
     return app
 
 
