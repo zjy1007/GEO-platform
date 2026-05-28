@@ -1,4 +1,5 @@
 from app.core.database import Base
+from app.models.account import WebAccount
 from app.models.evidence import EvidenceSource
 from app.models.geo import (
     CitationSource,
@@ -23,4 +24,5 @@ __all__ = [
     "MentionResult",
     "VerificationResult",
     "GeoReport",
+    "WebAccount",
 ]
