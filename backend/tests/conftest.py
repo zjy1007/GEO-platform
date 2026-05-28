@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
+from app.core.database import engine as app_engine
 
 
 @pytest_asyncio.fixture
@@ -28,3 +29,6 @@ async def db_session():
     async with Session() as session:
         yield session
     await engine.dispose()
+    # Worker jobs use the module-level engine; dispose it too so its pooled asyncpg
+    # connection isn't reused across pytest-asyncio's per-test event loops.
+    await app_engine.dispose()

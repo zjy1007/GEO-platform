@@ -1,13 +1,12 @@
-"""Arq worker entrypoint (placeholder for P0).
+"""Arq worker entrypoint.
 
-The real GEO eval / evidence / report tasks land in P1.4+. For now this just
-defines the WorkerSettings so `arq app.workers.worker.WorkerSettings` boots
-against Redis, proving the queue wiring is in place.
+Run with: arq app.workers.worker.WorkerSettings
 """
 from arq.connections import RedisSettings
 
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.workers.jobs import run_prompt_job
 
 
 async def ping(ctx, value: str = "pong") -> str:
@@ -19,6 +18,7 @@ async def startup(ctx) -> None:
 
 
 class WorkerSettings:
-    functions = [ping]
+    functions = [run_prompt_job, ping]
     on_startup = startup
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    max_jobs = settings.worker_max_jobs

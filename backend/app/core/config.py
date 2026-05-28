@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Redis (queue + cache)
     redis_url: str = "redis://localhost:6379/0"
 
+    # Worker (Arq) global concurrency
+    worker_max_jobs: int = 20
+
     # MinIO / S3 object storage
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"

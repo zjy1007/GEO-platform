@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, merchants, prompts
+from app.api import geo_runs, health, merchants, prompts
+from app.core.arq import create_arq_pool
 from app.core.config import settings
 from app.core.logging import TraceIdMiddleware, setup_logging
 
@@ -15,7 +16,11 @@ async def lifespan(app: FastAPI):
         import sentry_sdk
 
         sentry_sdk.init(dsn=settings.sentry_dsn, environment=settings.env)
-    yield
+    app.state.arq = await create_arq_pool()
+    try:
+        yield
+    finally:
+        await app.state.arq.aclose()
 
 
 def create_app() -> FastAPI:
@@ -33,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(merchants.router, prefix=settings.api_prefix)
     app.include_router(prompts.router, prefix=settings.api_prefix)
+    app.include_router(geo_runs.router, prefix=settings.api_prefix)
     return app
 
 
