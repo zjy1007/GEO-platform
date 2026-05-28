@@ -8,7 +8,9 @@ from app.core.arq import get_arq_pool
 from app.core.database import get_session
 from app.core.security import TenantContext, get_tenant
 from app.schemas.geo_run import GeoRunCreate, GeoRunOut, GeoRunProgress, ProviderResultOut
+from app.schemas.mention import ExtractResponse, MentionResultOut
 from app.services import geo_run_service as svc
+from app.services import mention_extraction_service as mention_svc
 from app.services import merchant_profile_service as merchant_svc
 
 router = APIRouter(prefix="/geo-runs", tags=["geo-runs"])
@@ -81,3 +83,31 @@ async def list_geo_run_results(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     rows = await svc.list_results(session, run_id, limit=limit, offset=offset)
     return [ProviderResultOut.model_validate(r) for r in rows]
+
+
+@router.post("/{run_id}/extract", response_model=ExtractResponse, status_code=status.HTTP_202_ACCEPTED)
+async def extract_run_mentions(
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _: TenantContext = Depends(get_tenant),
+    pool: ArqRedis = Depends(get_arq_pool),
+) -> ExtractResponse:
+    """Enqueue mention extraction for this run's successful, not-yet-extracted answers."""
+    if await svc.get_run(session, run_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+    pending = await mention_svc.pending_result_ids(session, run_id)
+    for pr_id in pending:
+        await pool.enqueue_job("extract_mention_job", {"provider_result_id": str(pr_id)})
+    return ExtractResponse(enqueued=len(pending))
+
+
+@router.get("/{run_id}/mentions", response_model=list[MentionResultOut])
+async def list_geo_run_mentions(
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _: TenantContext = Depends(get_tenant),
+) -> list[MentionResultOut]:
+    if await svc.get_run(session, run_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+    rows = await mention_svc.list_mentions(session, run_id)
+    return [MentionResultOut.model_validate(r) for r in rows]

@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # Worker (Arq) global concurrency
     worker_max_jobs: int = 20
 
+    # Provider used for analysis tasks (mention extraction / claim split / recommendations).
+    # Analysis goes through the cheap API channel (doc: 分析走 API).
+    analysis_provider: str = "deepseek"
+
     # MinIO / S3 object storage
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
