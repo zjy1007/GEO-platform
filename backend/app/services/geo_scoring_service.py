@@ -68,6 +68,7 @@ def aggregate_metrics(rows: list[dict], target_names: list[str]) -> dict:
     ]
 
     competitors = competitor_service.aggregate_competitors(rows, target_names)
+    competitor_gaps = competitor_service.build_competitor_gaps(competitors, target_names)
 
     return {
         "geo_score": geo_score,
@@ -75,6 +76,7 @@ def aggregate_metrics(rows: list[dict], target_names: list[str]) -> dict:
         "by_phase": by_phase,
         "by_provider_phase": by_provider_phase,
         "competitors": competitors,
+        "competitor_gaps": competitor_gaps,
     }
 
 
