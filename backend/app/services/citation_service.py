@@ -13,8 +13,10 @@ from collections import Counter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.geo import CitationSource, ProviderResult
+from app.models.geo import CitationSource, GeoPrompt, MentionResult, ProviderResult
 from app.providers.base import Citation
+
+_PHASES = ("decision", "doubt")
 
 _HIGH_CUTOFF = 3   # top 3 domains → 第一优先级
 _MID_CUTOFF = 7    # next → 第二优先级；其余 → 第三优先级
@@ -86,6 +88,38 @@ def build_citation_report(citations: list[dict], top_n: int = 10) -> dict:
     }
 
 
+def _exposure_group(rows: list[dict]) -> dict:
+    """Real-exposure rate for a set of web rows: fraction actually exposed."""
+    total = len(rows)
+    if total == 0:
+        return {"total": 0, "exposed": 0, "exposure_rate": 0.0}
+    exposed = sum(1 for r in rows if r.get("exposed"))
+    return {
+        "total": total,
+        "exposed": exposed,
+        "exposure_rate": round(exposed / total, 4),
+    }
+
+
+def build_web_exposure(rows_web: list[dict]) -> dict:
+    """真实曝光率 (web/账号池) split by phase.
+
+    rows_web: [{"phase": "decision"|"doubt"|..., "exposed": bool}], one row per
+    web provider_result. "exposed" means the merchant actually appeared in the
+    real account-pool answer (derived from its mention result).
+
+    Returns overall + per-phase exposure rate, e.g.:
+      {"overall": {...}, "by_phase": {"decision": {...}, "doubt": {...}}}
+    """
+    return {
+        "overall": _exposure_group(rows_web),
+        "by_phase": {
+            ph: _exposure_group([r for r in rows_web if r.get("phase") == ph])
+            for ph in _PHASES
+        },
+    }
+
+
 # --- DB helpers ---
 
 async def store_citations(
@@ -123,3 +157,24 @@ async def fetch_run_citations(session: AsyncSession, run_id) -> list[dict]:
         {"domain": r.domain, "source_name": r.source_name, "title": r.title, "url": r.url}
         for r in rows
     ]
+
+
+async def fetch_web_exposure_rows(session: AsyncSession, run_id) -> list[dict]:
+    """Fetch web (channel='web') provider_results joined with phase + mention status.
+
+    One row per successful web result: {"phase": ..., "exposed": bool}. "exposed"
+    is True when a mention result exists and is_mentioned — i.e. the merchant
+    actually surfaced in the real account-pool answer. Results without a mention
+    row count as not-exposed (left join), so exposure is conservative.
+    """
+    stmt = (
+        select(GeoPrompt.phase, MentionResult.is_mentioned)
+        .select_from(ProviderResult)
+        .join(GeoPrompt, ProviderResult.prompt_id == GeoPrompt.id)
+        .outerjoin(MentionResult, MentionResult.provider_result_id == ProviderResult.id)
+        .where(ProviderResult.run_id == run_id)
+        .where(ProviderResult.channel == "web")
+        .where(ProviderResult.status == "ok")
+    )
+    rows = (await session.execute(stmt)).all()
+    return [{"phase": r.phase, "exposed": bool(r.is_mentioned)} for r in rows]

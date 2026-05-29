@@ -5,6 +5,7 @@ provider_results, then atomically bumps the parent geo_run counters and advances
 its status machine (running → completed / partial_failed). A failed call is
 recorded (status='error') rather than crashing the run.
 """
+import asyncio
 import logging
 from uuid import UUID
 
@@ -17,12 +18,30 @@ from app.models.geo import GeoPrompt, GeoRun, MentionResult, ProviderResult, Ver
 from app.models.merchant import Merchant
 from app.providers.base import LLMRequest, LLMResponse
 from app.providers.factory import build_channel
+from app.services import account_pool_service as pool_svc
+from app.services import citation_service as citation_svc
 from app.services import evidence_service as evidence_svc
 from app.services import evidence_verification_service as verify_svc
 from app.services import mention_extraction_service as mention_svc
 from app.workers.rate_limit import limiter
 
 log = logging.getLogger("worker.jobs")
+
+# Max accounts to try before giving up on one web job (rotation on failure).
+_WEB_MAX_ACCOUNT_TRIES = 3
+# Keywords (lowercased) used to classify a web failure into a pool action.
+_RELOGIN_HINTS = ("relogin", "re-login", "login", "登录", "未登录", "登陆", "storage_state", "user_data_dir")
+_RISK_HINTS = ("risk", "captcha", "验证码", "风控", "blocked", "403", "429", "rate", "too many")
+
+
+def _classify_web_error(err: Exception) -> str:
+    """Map a web-channel exception to a pool action: 'relogin' | 'pause' | 'error'."""
+    msg = str(err).lower()
+    if any(h in msg for h in _RELOGIN_HINTS):
+        return "relogin"
+    if any(h in msg for h in _RISK_HINTS):
+        return "pause"
+    return "error"
 
 
 async def _bump_and_maybe_finish(session: AsyncSession, run_id: UUID, ok: bool) -> None:
@@ -54,10 +73,140 @@ async def _bump_and_maybe_finish(session: AsyncSession, run_id: UUID, ok: bool) 
         )
 
 
+async def _run_api_job(
+    session: AsyncSession, run_id: UUID, prompt_id: UUID, provider: str, prompt: GeoPrompt
+) -> dict:
+    try:
+        channel = build_channel(provider, "api")
+        async with limiter.semaphore(provider):
+            await limiter.throttle_qps(provider)
+            resp = await channel.chat(
+                LLMRequest(
+                    provider=provider,
+                    messages=[{"role": "user", "content": prompt.prompt_text or ""}],
+                    temperature=0.2,
+                )
+            )
+    except Exception as e:  # noqa: BLE001 — record and continue
+        log.warning("provider call failed: %s", e)
+        resp = LLMResponse(
+            provider=provider, channel="api", content="", status="error", error_message=str(e)
+        )
+
+    session.add(
+        ProviderResult(
+            run_id=run_id,
+            prompt_id=prompt_id,
+            provider=provider,
+            channel="api",
+            model=resp.model,
+            answer_text=resp.content,
+            raw_response=resp.raw_response,
+            latency_ms=resp.latency_ms,
+            prompt_tokens=resp.prompt_tokens,
+            completion_tokens=resp.completion_tokens,
+            status=resp.status,
+        )
+    )
+    await _bump_and_maybe_finish(session, run_id, ok=(resp.status == "ok"))
+    await session.commit()
+    return {"status": resp.status}
+
+
+async def _run_web_job(
+    session: AsyncSession, run_id: UUID, prompt_id: UUID, provider: str, prompt: GeoPrompt
+) -> dict:
+    """Drive one web (account-pool) call: lease an account, run, persist + citations.
+
+    Rotates through up to _WEB_MAX_ACCOUNT_TRIES accounts on failure, applying the
+    appropriate pool action (pause / mark_need_relogin) per failure. If no idle
+    account is available, the job does NOT bump run counters and reports retryable
+    so the queue can re-attempt it later.
+    """
+    channel = build_channel(provider, "web")
+    resp: LLMResponse | None = None
+
+    for _ in range(_WEB_MAX_ACCOUNT_TRIES):
+        account = await pool_svc.pick_idle(session, provider)
+        if account is None:
+            # No capacity right now — leave run counters untouched, signal retry.
+            await session.commit()
+            return {"status": "retryable", "reason": "no idle account"}
+
+        account_id = account.id
+        await pool_svc.reserve(session, account)
+        await session.flush()
+
+        # Anti-detection: random human-like spacing before and after the request.
+        await asyncio.sleep(pool_svc.next_human_delay())
+        try:
+            resp = await channel.chat(
+                LLMRequest(
+                    provider=provider,
+                    channel="web",
+                    messages=[{"role": "user", "content": prompt.prompt_text or ""}],
+                    temperature=0.2,
+                    metadata={"account_id": str(account_id), "phase": prompt.phase},
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — classify and rotate
+            log.warning("web channel call failed (provider=%s): %s", provider, e)
+            action = _classify_web_error(e)
+            await pool_svc.release(session, account, success=False)
+            if action == "relogin":
+                await pool_svc.mark_need_relogin(session, account)
+            elif action == "pause":
+                await pool_svc.pause(session, account)
+            await session.flush()
+            resp = LLMResponse(
+                provider=provider,
+                channel="web",
+                content="",
+                status="error",
+                error_message=str(e),
+            )
+            # On a transient/risk failure, try the next account; on a hard error stop.
+            if action == "error":
+                break
+            continue
+
+        await asyncio.sleep(pool_svc.next_human_delay())
+        ok = resp.status == "ok"
+        await pool_svc.release(session, account, success=ok)
+        break
+
+    # Persist the (last) result with channel='web' + account_id + raw payload.
+    pr = ProviderResult(
+        run_id=run_id,
+        prompt_id=prompt_id,
+        provider=provider,
+        channel="web",
+        account_id=account_id,
+        model=resp.model,
+        answer_text=resp.content,
+        raw_response=resp.raw_response,
+        latency_ms=resp.latency_ms,
+        prompt_tokens=resp.prompt_tokens,
+        completion_tokens=resp.completion_tokens,
+        status=resp.status,
+    )
+    session.add(pr)
+    await session.flush()
+
+    # Persist citations row-by-row (feeds web exposure + source ranking report blocks).
+    if resp.status == "ok" and resp.citations:
+        await citation_svc.store_citations(session, pr.id, resp.citations)
+
+    await _bump_and_maybe_finish(session, run_id, ok=(resp.status == "ok"))
+    await session.commit()
+    return {"status": resp.status}
+
+
 async def run_prompt_job(ctx: dict, job: dict) -> dict:
     run_id = UUID(job["run_id"])
     prompt_id = UUID(job["prompt_id"])
     provider = job["provider"]
+    channel = job.get("channel", "api")
 
     async with SessionLocal() as session:
         prompt = await session.get(GeoPrompt, prompt_id)
@@ -66,42 +215,9 @@ async def run_prompt_job(ctx: dict, job: dict) -> dict:
             await session.commit()
             return {"status": "error", "reason": "prompt not found"}
 
-        try:
-            channel = build_channel(provider, "api")
-            async with limiter.semaphore(provider):
-                await limiter.throttle_qps(provider)
-                resp = await channel.chat(
-                    LLMRequest(
-                        provider=provider,
-                        messages=[{"role": "user", "content": prompt.prompt_text or ""}],
-                        temperature=0.2,
-                    )
-                )
-        except Exception as e:  # noqa: BLE001 — record and continue
-            log.warning("provider call failed: %s", e)
-            resp = LLMResponse(
-                provider=provider, channel="api", content="", status="error", error_message=str(e)
-            )
-
-        session.add(
-            ProviderResult(
-                run_id=run_id,
-                prompt_id=prompt_id,
-                provider=provider,
-                channel="api",
-                model=resp.model,
-                answer_text=resp.content,
-                raw_response=resp.raw_response,
-                latency_ms=resp.latency_ms,
-                prompt_tokens=resp.prompt_tokens,
-                completion_tokens=resp.completion_tokens,
-                status=resp.status,
-            )
-        )
-        await _bump_and_maybe_finish(session, run_id, ok=(resp.status == "ok"))
-        await session.commit()
-
-    return {"status": resp.status}
+        if channel == "web":
+            return await _run_web_job(session, run_id, prompt_id, provider, prompt)
+        return await _run_api_job(session, run_id, prompt_id, provider, prompt)
 
 
 async def extract_mention_job(ctx: dict, payload: dict) -> dict:

@@ -145,6 +145,10 @@ async def compute_and_store(
     citations = await citation_service.fetch_run_citations(session, run.id)
     citation_report = citation_service.build_citation_report(citations)
 
+    # 真实曝光率: web (account-pool) exposure split by phase (P2.3). Empty until web runs land.
+    web_rows = await citation_service.fetch_web_exposure_rows(session, run.id)
+    web_exposure = citation_service.build_web_exposure(web_rows)
+
     # Evidence verifiability (P3.2); None when no claims were verified for this run.
     statuses = await verify_svc.fetch_run_verification_statuses(session, run.id)
     evidence_rate = verify_svc.compute_evidence_rate(statuses)
@@ -156,6 +160,7 @@ async def compute_and_store(
         "completeness": completeness.score,
         "evidence_rate": evidence_rate,
         **citation_report,  # citation_ranking / source_investment / article_titles
+        "web_exposure": web_exposure,  # 真实曝光率(账号池) by phase
         "recommendations": build_recommendations(metrics, completeness.suggestions),
     }
 

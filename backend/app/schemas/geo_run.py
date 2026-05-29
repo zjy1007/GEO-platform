@@ -9,6 +9,8 @@ class GeoRunCreate(BaseModel):
     merchant_id: uuid.UUID
     run_type: Literal["organic_eval", "diagnostic_eval"] = "organic_eval"
     providers: list[str] = Field(min_length=1)
+    # Channel for the run: "api" (default, OpenAI-compatible) or "web" (account pool).
+    channel: Literal["api", "web"] = "api"
     prompt_count: int | None = Field(default=None, ge=1, le=500)
     repeat_count: int = Field(default=1, ge=1, le=5)
     modes: list[str] | None = None

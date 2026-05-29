@@ -97,6 +97,53 @@ def test_render_html_shows_citation_blocks_when_present():
     assert "第一优先级" in html
 
 
+# ---------------------------------------------------------------------------
+# build_web_exposure (真实曝光率 by phase) — pure function
+# ---------------------------------------------------------------------------
+
+def _web_rows():
+    return [
+        {"phase": "decision", "exposed": True},
+        {"phase": "decision", "exposed": True},
+        {"phase": "decision", "exposed": False},
+        {"phase": "decision", "exposed": False},
+        {"phase": "doubt", "exposed": True},
+        {"phase": "doubt", "exposed": False},
+    ]
+
+
+def test_build_web_exposure_by_phase():
+    exp = cs.build_web_exposure(_web_rows())
+    assert set(exp.keys()) == {"overall", "by_phase"}
+    # overall: 3 of 6 exposed
+    assert exp["overall"]["total"] == 6
+    assert exp["overall"]["exposed"] == 3
+    assert exp["overall"]["exposure_rate"] == round(3 / 6, 4)
+    # decision: 2 of 4 → 0.5
+    assert exp["by_phase"]["decision"]["total"] == 4
+    assert exp["by_phase"]["decision"]["exposure_rate"] == 0.5
+    # doubt: 1 of 2 → 0.5
+    assert exp["by_phase"]["doubt"]["total"] == 2
+    assert exp["by_phase"]["doubt"]["exposed"] == 1
+    assert exp["by_phase"]["doubt"]["exposure_rate"] == 0.5
+
+
+def test_build_web_exposure_empty():
+    exp = cs.build_web_exposure([])
+    assert exp["overall"] == {"total": 0, "exposed": 0, "exposure_rate": 0.0}
+    assert exp["by_phase"]["decision"]["total"] == 0
+    assert exp["by_phase"]["doubt"]["exposure_rate"] == 0.0
+
+
+def test_build_web_exposure_phase_isolation():
+    # A phase outside decision/doubt is ignored in by_phase but counted in overall.
+    rows = [{"phase": "other", "exposed": True}, {"phase": "decision", "exposed": True}]
+    exp = cs.build_web_exposure(rows)
+    assert exp["overall"]["total"] == 2
+    assert exp["by_phase"]["decision"]["total"] == 1
+    assert exp["by_phase"]["doubt"]["total"] == 0
+
+
 def test_render_html_citation_placeholder_when_empty():
     report = {
         "geo_score": 0, "merchant": {"name": "x"}, "overall": {},

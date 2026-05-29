@@ -21,6 +21,7 @@ def build_jobs(
     prompt_ids: list[uuid.UUID],
     providers: list[str],
     repeat_count: int,
+    channel: str = "api",
 ) -> list[dict]:
     jobs: list[dict] = []
     for pid in prompt_ids:
@@ -33,18 +34,21 @@ def build_jobs(
                         "prompt_id": str(pid),
                         "provider": provider,
                         "repeat_index": i,
+                        "channel": channel,
                     }
                 )
     return jobs
 
 
-def validate_providers(providers: list[str]) -> None:
+def validate_providers(providers: list[str], channel: str = "api") -> None:
     reg = get_registry()
+    if channel not in ("api", "web"):
+        raise ValueError(f"未知 channel: {channel}")
     for p in providers:
         if p not in reg.providers:
             raise ValueError(f"未知 provider: {p}")
-        if "api" not in reg.get(p).channels:
-            raise ValueError(f"provider {p} 不支持 api 渠道（web 渠道在 P2 接入）")
+        if channel not in reg.get(p).channels:
+            raise ValueError(f"provider {p} 不支持 {channel} 渠道")
 
 
 async def select_prompts(
@@ -75,8 +79,9 @@ async def create_run(
     repeat_count: int,
     modes: list[str] | None,
     phases: list[str] | None,
+    channel: str = "api",
 ) -> tuple[GeoRun, list[dict]]:
-    validate_providers(providers)
+    validate_providers(providers, channel)
     prompts = await select_prompts(session, merchant_id, modes, phases, prompt_count)
     if not prompts:
         raise ValueError("该商家还没有可用问题，请先生成问题集（POST /api/merchants/{id}/prompts）")
@@ -92,7 +97,9 @@ async def create_run(
     )
     session.add(run)
     await session.flush()
-    jobs = build_jobs(run.id, merchant_id, [p.id for p in prompts], providers, repeat_count)
+    jobs = build_jobs(
+        run.id, merchant_id, [p.id for p in prompts], providers, repeat_count, channel
+    )
     await session.commit()
     await session.refresh(run)
     return run, jobs
