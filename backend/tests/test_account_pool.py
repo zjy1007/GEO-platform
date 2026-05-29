@@ -330,3 +330,122 @@ async def test_get_pool_stats_empty(session: AsyncSession):
     stats = await svc.get_pool_stats(session, "yuanbao")
     assert stats["total"] == 0
     assert stats["quota_remaining"] == 0
+
+
+# ---------------------------------------------------------------------------
+# next_human_delay (pure — runs without a DB)
+# ---------------------------------------------------------------------------
+
+def test_next_human_delay_in_default_range():
+    for _ in range(50):
+        d = svc.next_human_delay()
+        assert svc.HUMAN_DELAY_MIN <= d <= svc.HUMAN_DELAY_MAX
+
+
+def test_next_human_delay_custom_range():
+    assert svc.next_human_delay(1.0, 1.0) == 1.0
+
+
+def test_next_human_delay_is_randomized():
+    vals = {svc.next_human_delay() for _ in range(30)}
+    assert len(vals) > 1
+
+
+# ---------------------------------------------------------------------------
+# pick_idle (design-API alias of pick_account)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pick_idle_returns_available(session: AsyncSession):
+    acct = _make_account(used_today=2, daily_quota=10)
+    session.add(acct)
+    await session.flush()
+
+    result = await svc.pick_idle(session, "deepseek")
+    assert result is not None
+    assert result.id == acct.id
+
+
+# ---------------------------------------------------------------------------
+# reserve / release lease lifecycle
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_reserve_consumes_quota_slot(session: AsyncSession):
+    acct = _make_account(used_today=3, daily_quota=10)
+    session.add(acct)
+    await session.flush()
+
+    await svc.reserve(session, acct)
+    assert acct.used_today == 4
+    assert acct.last_used_at is not None
+
+
+@pytest.mark.asyncio
+async def test_release_success_keeps_slot(session: AsyncSession):
+    acct = _make_account(used_today=3)
+    session.add(acct)
+    await session.flush()
+
+    await svc.reserve(session, acct)  # -> 4
+    await svc.release(session, acct, success=True)
+    assert acct.used_today == 4
+
+
+@pytest.mark.asyncio
+async def test_release_failure_refunds_slot(session: AsyncSession):
+    acct = _make_account(used_today=3)
+    session.add(acct)
+    await session.flush()
+
+    await svc.reserve(session, acct)  # -> 4
+    await svc.release(session, acct, success=False)
+    assert acct.used_today == 3
+
+
+@pytest.mark.asyncio
+async def test_release_failure_floors_at_zero(session: AsyncSession):
+    acct = _make_account(used_today=0)
+    session.add(acct)
+    await session.flush()
+
+    await svc.release(session, acct, success=False)
+    assert acct.used_today == 0
+
+
+# ---------------------------------------------------------------------------
+# pause (alias) / mark_need_relogin
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pause_alias_pauses_account(session: AsyncSession):
+    acct = _make_account()
+    session.add(acct)
+    await session.flush()
+
+    await svc.pause(session, acct, reason="captcha")
+    assert acct.status == "paused"
+    assert acct.paused_reason == "captcha"
+
+
+@pytest.mark.asyncio
+async def test_mark_need_relogin_sets_status(session: AsyncSession):
+    acct = _make_account()
+    session.add(acct)
+    await session.flush()
+
+    await svc.mark_need_relogin(session, acct)
+    assert acct.status == "need_relogin"
+    assert acct.paused_reason is not None
+
+
+@pytest.mark.asyncio
+async def test_need_relogin_not_resumed_by_cooldown(session: AsyncSession):
+    """need_relogin accounts must NOT be auto-resumed — only paused ones are."""
+    acct = _make_account(status="need_relogin", last_used_at=_past(svc.COOLDOWN_HOURS + 1))
+    session.add(acct)
+    await session.flush()
+
+    resumed = await svc.resume_if_cooldown_expired(session, acct)
+    assert resumed is False
+    assert acct.status == "need_relogin"
