@@ -76,18 +76,78 @@ def _competitor_table(competitors: list[dict]) -> str:
         return "<p class='muted'>暂无竞品数据</p>"
     trs = []
     for i, c in enumerate(competitors[:10], 1):
-        tag = "<span class='tag'>本商家</span>" if c["is_target"] else ""
+        tag = "<span class='tag'>本商家</span>" if c.get("is_target") else ""
+        avg_rank = c.get("avg_rank")
+        by_phase = c.get("by_phase") or {}
+        dec = by_phase.get("decision") or {}
+        dbt = by_phase.get("doubt") or {}
         trs.append(
             "<tr>"
             f"<td>{i}</td>"
             f"<td>{escape(c['brand'])} {tag}</td>"
             f"<td>{c['appearances']}</td>"
             f"<td>{_pct(c['rate'])}</td>"
+            f"<td>{avg_rank if avg_rank is not None else '-'}</td>"
+            f"<td>{_pct(dec.get('rate', 0))}</td>"
+            f"<td>{_pct(dbt.get('rate', 0))}</td>"
             "</tr>"
         )
     return (
         "<table><thead><tr><th>#</th><th>商家/品牌</th><th>被提及次数</th><th>可见度</th>"
+        "<th>平均排名</th><th>决策期可见度</th><th>质疑期可见度</th>"
         "</tr></thead><tbody>" + "".join(trs) + "</tbody></table>"
+    )
+
+
+def _gap_priority(gap: dict) -> str:
+    """Derive a high/medium/low priority for a competitor gap entry.
+
+    Prefers an explicit ``priority`` field; otherwise infers from the
+    mention-rate gap magnitude so the existing .prio styles can be reused.
+    """
+    pri = gap.get("priority")
+    if pri in ("high", "medium", "low"):
+        return pri
+    g = abs(gap.get("mention_rate_gap") or 0)
+    if g >= 0.2:
+        return "high"
+    if g >= 0.08:
+        return "medium"
+    return "low"
+
+
+def _competitor_gaps(gaps: list[dict]) -> str:
+    if not gaps:
+        return ""
+    # Sort by mention-rate gap magnitude (largest deficit first).
+    ordered = sorted(gaps, key=lambda g: abs(g.get("mention_rate_gap") or 0), reverse=True)
+    items = []
+    for g in ordered:
+        pri = _gap_priority(g)
+        brand = escape(g.get("brand") or "竞品")
+        reason = g.get("reason")
+        if reason:
+            text = escape(reason)
+        else:
+            mr_gap = g.get("mention_rate_gap") or 0
+            target_rate = g.get("target_rate")
+            comp_rate = g.get("competitor_rate")
+            detail = ""
+            if target_rate is not None and comp_rate is not None:
+                detail = f"（本商家 {_pct(target_rate)} vs {brand} {_pct(comp_rate)}）"
+            verb = "落后" if mr_gap < 0 else "领先"
+            text = f"相对 {brand}，提及率{verb} {_pct(abs(mr_gap))}{detail}"
+        rank_gap = g.get("avg_rank_gap")
+        rank_note = ""
+        if rank_gap is not None:
+            rank_note = f"<span class='muted' style='margin-left:8px'>平均排名差 {rank_gap:+.1f}</span>"
+        items.append(
+            f"<li><span class='prio prio-{pri}'>{_PRIORITY_LABEL.get(pri, pri)}</span>"
+            f"{text}{rank_note}</li>"
+        )
+    return (
+        "<h3 class='sub'>竞品差距分析</h3>"
+        "<ul class='recs'>" + "".join(items) + "</ul>"
     )
 
 
@@ -192,7 +252,7 @@ def render_html(report: dict, run_created_at: str = "") -> str:
 
   <section><h2>各平台 × 决策期 / 质疑期</h2>{_provider_phase_table(report.get('by_provider_phase', []))}</section>
   <section><h2>决策期 vs 负面质疑期</h2>{_phase_compare_table(report.get('by_phase', {}))}</section>
-  <section><h2>竞品可见度对比</h2>{_competitor_table(report.get('competitors', []))}</section>
+  <section><h2>竞品可见度对比</h2>{_competitor_table(report.get('competitors', []))}{_competitor_gaps(report.get('competitor_gaps', []))}</section>
   <section><h2>引用源平台排行榜 / 信源投放建议</h2>
     {_citation_section(report.get('citation_ranking', []), report.get('source_investment', []))}</section>
   <section><h2>优化建议</h2>{_recommendations(report.get('recommendations', []))}</section>

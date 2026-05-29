@@ -185,6 +185,46 @@ export interface VerificationResultOut {
   explanation?: string | null;
 }
 
+// Per-phase visibility for a competitor (decision / doubt windows).
+export interface CompetitorPhaseStat {
+  rate?: number | null;
+  appearances?: number | null;
+  avg_rank?: number | null;
+}
+
+// One row in report_json.competitors (target merchant included, flagged via is_target).
+export interface Competitor {
+  brand: string;
+  appearances: number;
+  rate: number;
+  is_target?: boolean | null;
+  avg_rank?: number | null;
+  by_phase?: {
+    decision?: CompetitorPhaseStat | null;
+    doubt?: CompetitorPhaseStat | null;
+  } | null;
+}
+
+// One row in report_json.competitor_gaps (target vs a single competitor).
+export interface CompetitorGap {
+  brand: string;
+  target_rate?: number | null;
+  competitor_rate?: number | null;
+  mention_rate_gap?: number | null;
+  avg_rank_gap?: number | null;
+  by_phase_gap?: Record<string, number> | null;
+  reason?: string | null;
+  priority?: "high" | "medium" | "low" | null;
+}
+
+// Narrow shape for the parts of report_json the competitor chart reads.
+// Kept partial: the backend report_json carries many more keys.
+export interface GeoReportJson {
+  competitors?: Competitor[] | null;
+  competitor_gaps?: CompetitorGap[] | null;
+  [key: string]: unknown;
+}
+
 export interface GeoReportOut {
   id: string;
   run_id: string;
@@ -194,7 +234,7 @@ export interface GeoReportOut {
   evidence_rate?: number | null;
   positive_rate?: number | null;
   rank_score?: number | null;
-  report_json?: Record<string, unknown> | null;
+  report_json?: GeoReportJson | null;
   created_at?: string | null;
 }
 
