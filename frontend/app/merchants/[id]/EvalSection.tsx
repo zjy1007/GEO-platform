@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import {
   Card,
@@ -22,23 +22,19 @@ import {
   ExperimentOutlined,
   FileTextOutlined,
   EyeOutlined,
+  DashboardOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
   ApiError,
-  GeoRunProgress,
   ProviderResultOut,
   MentionResultOut,
   GeoReportOut,
-  TERMINAL_RUN_STATUSES,
 } from "@/lib/api";
-
-const POLL_MS = 2000;
-
-function isTerminal(status?: string | null): boolean {
-  return !!status && TERMINAL_RUN_STATUSES.includes(status);
-}
+import { useRunProgress } from "@/app/components/useRunProgress";
+import RunProgressDrawer from "@/app/components/RunProgressDrawer";
+import CompetitorVisibilityChart from "@/app/components/CompetitorVisibilityChart";
 
 function pct(v?: number | null): string {
   return v == null ? "-" : `${(v * 100).toFixed(1)}%`;
@@ -59,7 +55,6 @@ function sentimentTag(s?: string | null) {
 
 export default function EvalSection({ merchantId }: { merchantId: string }) {
   const [runId, setRunId] = useState<string | null>(null);
-  const [progress, setProgress] = useState<GeoRunProgress | null>(null);
   const [results, setResults] = useState<ProviderResultOut[]>([]);
   const [mentions, setMentions] = useState<MentionResultOut[]>([]);
   const [report, setReport] = useState<GeoReportOut | null>(null);
@@ -67,50 +62,33 @@ export default function EvalSection({ merchantId }: { merchantId: string }) {
   const [starting, setStarting] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [reporting, setReporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Shared geo-run polling (progress / terminal detection / percent / error).
+  const {
+    progress,
+    setProgress,
+    terminal,
+    percent,
+    error,
+    setError,
+    startPolling,
+  } = useRunProgress();
 
-  const clearPoll = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => clearPoll, [clearPoll]);
-
-  const loadResultsAndMentions = useCallback(async (id: string) => {
-    try {
-      const [r, m] = await Promise.all([
-        api.runResults(id),
-        api.runMentions(id),
-      ]);
-      setResults(r);
-      setMentions(m);
-    } catch (e) {
-      if (e instanceof ApiError) setError(e.message);
-    }
-  }, []);
-
-  const startPolling = useCallback(
-    (id: string) => {
-      clearPoll();
-      pollRef.current = setInterval(async () => {
-        try {
-          const p = await api.getGeoRun(id);
-          setProgress(p);
-          if (isTerminal(p.status)) {
-            clearPoll();
-            await loadResultsAndMentions(id);
-          }
-        } catch (e) {
-          clearPoll();
-          if (e instanceof ApiError) setError(e.message);
-        }
-      }, POLL_MS);
+  const loadResultsAndMentions = useCallback(
+    async (id: string) => {
+      try {
+        const [r, m] = await Promise.all([
+          api.runResults(id),
+          api.runMentions(id),
+        ]);
+        setResults(r);
+        setMentions(m);
+      } catch (e) {
+        if (e instanceof ApiError) setError(e.message);
+      }
     },
-    [clearPoll, loadResultsAndMentions]
+    [setError]
   );
 
   const startRun = async () => {
@@ -136,7 +114,7 @@ export default function EvalSection({ merchantId }: { merchantId: string }) {
         failed_jobs: run.failed_jobs ?? 0,
         progress: 0,
       });
-      startPolling(run.id);
+      startPolling(run.id, () => loadResultsAndMentions(run.id));
       message.success("测评已发起");
     } catch (e) {
       if (e instanceof ApiError) {
@@ -181,13 +159,6 @@ export default function EvalSection({ merchantId }: { merchantId: string }) {
       setReporting(false);
     }
   };
-
-  const terminal = isTerminal(progress?.status);
-  const percent = progress
-    ? progress.total_jobs > 0
-      ? Math.round((progress.finished_jobs / progress.total_jobs) * 100)
-      : Math.round((progress.progress ?? 0) * 100)
-    : 0;
 
   const resultColumns: ColumnsType<ProviderResultOut> = [
     { title: "Provider", dataIndex: "provider", key: "provider", width: 110 },
@@ -275,14 +246,24 @@ export default function EvalSection({ merchantId }: { merchantId: string }) {
       <Card
         title="测评执行"
         extra={
-          <Button
-            type="primary"
-            icon={<PlayCircleOutlined />}
-            loading={starting}
-            onClick={startRun}
-          >
-            发起测评
-          </Button>
+          <Space>
+            {runId && (
+              <Button
+                icon={<DashboardOutlined />}
+                onClick={() => setDrawerOpen(true)}
+              >
+                查看进度
+              </Button>
+            )}
+            <Button
+              type="primary"
+              icon={<PlayCircleOutlined />}
+              loading={starting}
+              onClick={startRun}
+            >
+              发起测评
+            </Button>
+          </Space>
         }
       >
         {!progress && (
@@ -372,30 +353,45 @@ export default function EvalSection({ merchantId }: { merchantId: string }) {
       )}
 
       {report && runId && (
-        <Card title="诊断报告">
-          <Descriptions bordered column={3} size="small" style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="GEO 分">
-              {report.geo_score == null ? "-" : report.geo_score.toFixed(1)}
-            </Descriptions.Item>
-            <Descriptions.Item label="提及率">
-              {pct(report.mention_rate)}
-            </Descriptions.Item>
-            <Descriptions.Item label="正面率">
-              {pct(report.positive_rate)}
-            </Descriptions.Item>
-          </Descriptions>
-          <iframe
-            title="report"
-            src={api.reportHtmlUrl(runId)}
-            style={{
-              width: "100%",
-              height: 720,
-              border: "1px solid #f0f0f0",
-              borderRadius: 6,
-            }}
+        <>
+          <CompetitorVisibilityChart
+            competitors={report.report_json?.competitors}
           />
-        </Card>
+          <Card title="诊断报告">
+            <Descriptions bordered column={3} size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="GEO 分">
+                {report.geo_score == null ? "-" : report.geo_score.toFixed(1)}
+              </Descriptions.Item>
+              <Descriptions.Item label="提及率">
+                {pct(report.mention_rate)}
+              </Descriptions.Item>
+              <Descriptions.Item label="正面率">
+                {pct(report.positive_rate)}
+              </Descriptions.Item>
+            </Descriptions>
+            <iframe
+              title="report"
+              src={api.reportHtmlUrl(runId)}
+              style={{
+                width: "100%",
+                height: 720,
+                border: "1px solid #f0f0f0",
+                borderRadius: 6,
+              }}
+            />
+          </Card>
+        </>
       )}
+
+      <RunProgressDrawer
+        open={drawerOpen}
+        runId={runId}
+        onClose={() => setDrawerOpen(false)}
+        onExtract={extract}
+        onGenerateReport={generateReport}
+        extracting={extracting}
+        reporting={reporting}
+      />
     </Space>
   );
 }
