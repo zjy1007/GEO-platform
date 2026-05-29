@@ -112,6 +112,68 @@ def nami_payload():
     }
 
 
+# --- doc §24: two-request (搜索结果 + 正文) split fixtures ------------------
+
+@pytest.fixture
+def doubao_search_payload():
+    """豆包 搜索结果 request — carries citations only, no answer text."""
+    return {
+        "search_results": [
+            {
+                "title": "豆包搜索命中A",
+                "url": "https://www.zhihu.com/q/111",
+                "content": "知乎讨论摘要",
+                "source": "知乎",
+            },
+            {
+                "title": "豆包搜索命中B",
+                "url": "https://m.weibo.cn/status/222",
+                "content": "微博讨论摘要",
+                "source": "微博",
+            },
+        ]
+    }
+
+
+@pytest.fixture
+def doubao_answer_payload():
+    """豆包 正文 request — carries the answer text only, no citations."""
+    return {
+        "message": {
+            "content": "豆包分两请求时的正文回答。",
+        }
+    }
+
+
+@pytest.fixture
+def nami_search_payload():
+    """纳米 搜索结果 request (nested data.searchResults), no answer."""
+    return {
+        "data": {
+            "searchResults": [
+                {
+                    "title": "纳米搜索命中",
+                    "url": "https://baike.baidu.com/item/x",
+                    "desc": "百度百科条目",
+                    "source": "百度百科",
+                }
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def nami_answer_payload():
+    """纳米 正文 request (data.answer), no citations."""
+    return {"data": {"answer": "纳米分两请求时的正文。"}}
+
+
+@pytest.fixture
+def doubao_offline_payload():
+    """豆包 正文 only, 联网搜索 关闭 → no search payload at all."""
+    return {"message": {"content": "联网关闭时只有正文，无引用。"}}
+
+
 # ---------------------------------------------------------------------------
 # extract_domain
 # ---------------------------------------------------------------------------
@@ -294,6 +356,133 @@ def test_nami_build_response(nami_payload):
     assert resp.channel == "web"
     assert len(resp.citations) == 1
     assert resp.citations[0].domain == "baidu.com"
+
+
+# ---------------------------------------------------------------------------
+# Yuanbao — nested-path candidates + 联网关闭 fallback
+# ---------------------------------------------------------------------------
+
+def test_yuanbao_locate_answer_nested_data():
+    ch = YuanbaoWebChannel()
+    assert ch.locate_answer({"data": {"content": "嵌套正文"}}) == "嵌套正文"
+
+
+def test_yuanbao_citations_empty_when_search_off():
+    """联网搜索 关闭 → 无 references → citations 为空，不报错。"""
+    ch = YuanbaoWebChannel()
+    resp = ch.build_response_from_payload({"reply": "无联网回答，无引用。"})
+    assert resp.content == "无联网回答，无引用。"
+    assert resp.citations == []
+
+
+# ---------------------------------------------------------------------------
+# Nami — nested-path candidates + 联网关闭 fallback
+# ---------------------------------------------------------------------------
+
+def test_nami_locate_answer_nested_data():
+    ch = NamiWebChannel()
+    assert ch.locate_answer({"data": {"answer": "纳米嵌套正文"}}) == "纳米嵌套正文"
+
+
+def test_nami_citations_empty_when_search_off():
+    ch = NamiWebChannel()
+    resp = ch.build_response_from_payload({"answer": "纳米无联网回答。"})
+    assert resp.content == "纳米无联网回答。"
+    assert resp.citations == []
+
+
+# ---------------------------------------------------------------------------
+# Doubao — choices/delta path + 联网关闭 fallback
+# ---------------------------------------------------------------------------
+
+def test_doubao_locate_answer_delta_form():
+    ch = DoubaoWebChannel()
+    payload = {"choices": [{"delta": {"content": "豆包delta正文"}}]}
+    assert ch.locate_answer(payload) == "豆包delta正文"
+
+
+def test_doubao_single_payload_offline_no_citations(doubao_offline_payload):
+    """联网搜索 关闭：单 payload 只有正文，citations 为空。"""
+    ch = DoubaoWebChannel()
+    resp = ch.build_response_from_payload(doubao_offline_payload)
+    assert "联网关闭" in resp.content
+    assert resp.citations == []
+
+
+# ---------------------------------------------------------------------------
+# doc §24 — multi-payload merge (搜索结果 payload + 正文 payload)
+# build_response_from_payload([...]) must merge: answer from 正文,
+# citations from 搜索结果, regardless of list order.
+# ---------------------------------------------------------------------------
+
+def test_doubao_merge_two_payloads(doubao_search_payload, doubao_answer_payload):
+    ch = DoubaoWebChannel()
+    resp = ch.build_response_from_payload(
+        [doubao_search_payload, doubao_answer_payload], latency_ms=700
+    )
+    assert resp.provider == "doubao"
+    assert resp.channel == "web"
+    assert resp.content == "豆包分两请求时的正文回答。"
+    assert len(resp.citations) == 2
+    assert resp.citations[0].domain == "zhihu.com"
+    assert resp.citations[1].domain == "m.weibo.cn"
+    assert resp.citations[0].index == 1
+    assert resp.citations[1].index == 2
+    assert resp.latency_ms == 700
+    # raw_response keeps both packets for audit
+    assert "payloads" in resp.raw_response
+    assert len(resp.raw_response["payloads"]) == 2
+
+
+def test_doubao_merge_payload_order_independent(
+    doubao_search_payload, doubao_answer_payload
+):
+    """正文 payload first, 搜索结果 second — result must be identical."""
+    ch = DoubaoWebChannel()
+    resp = ch.build_response_from_payload(
+        [doubao_answer_payload, doubao_search_payload]
+    )
+    assert resp.content == "豆包分两请求时的正文回答。"
+    assert len(resp.citations) == 2
+
+
+def test_nami_merge_two_payloads(nami_search_payload, nami_answer_payload):
+    ch = NamiWebChannel()
+    resp = ch.build_response_from_payload(
+        [nami_answer_payload, nami_search_payload]
+    )
+    assert resp.content == "纳米分两请求时的正文。"
+    assert len(resp.citations) == 1
+    assert resp.citations[0].domain == "baike.baidu.com"
+    assert resp.citations[0].source_name == "百度百科"
+
+
+def test_merge_search_off_no_citation_payload(doubao_answer_payload):
+    """多请求场景下联网关闭：只拦到 正文 payload，citations 兜底为空。"""
+    ch = DoubaoWebChannel()
+    resp = ch.build_response_from_payload([doubao_answer_payload])
+    assert resp.content == "豆包分两请求时的正文回答。"
+    assert resp.citations == []
+
+
+def test_merge_skips_non_dict_payloads(doubao_answer_payload, doubao_search_payload):
+    """列表里混入 None / 非 dict 不应报错。"""
+    ch = DoubaoWebChannel()
+    resp = ch.build_response_from_payload(
+        [None, doubao_search_payload, "junk", doubao_answer_payload]
+    )
+    assert resp.content == "豆包分两请求时的正文回答。"
+    assert len(resp.citations) == 2
+
+
+def test_single_dict_still_backward_compatible(deepseek_payload):
+    """单 dict 调用必须与原签名一致（deepseek raw_response 仍是原 payload）。"""
+    ch = DeepSeekWebChannel()
+    resp = ch.build_response_from_payload(deepseek_payload)
+    # single-payload path keeps raw_response == the dict itself (not wrapped)
+    assert resp.raw_response == deepseek_payload
+    assert "payloads" not in resp.raw_response
+    assert len(resp.citations) == 2
 
 
 # ---------------------------------------------------------------------------

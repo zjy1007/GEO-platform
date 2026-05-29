@@ -90,14 +90,38 @@ class WebChannel(BaseChannel):
 
     def build_response_from_payload(
         self,
-        payload: dict,
+        payload: "dict | list[dict]",
         account_id: str | None = None,
         latency_ms: int = 0,
     ) -> LLMResponse:
-        """Build a normalized LLMResponse from a captured payload dict.
+        """Build a normalized LLMResponse from one or more captured payloads.
 
         This is the pure, unit-testable bridge: locate_* + parse_citations.
+
+        Two call shapes are supported:
+
+        ① Single payload (dict) — the common case where one intercepted
+           response carries both the answer text and the citation list.
+           This is the original signature and stays fully backward compatible.
+
+        ② Multiple payloads (list[dict]) — doc §24: some platforms (e.g. 豆包)
+           split 搜索结果 and 正文 into two separate requests, so both must be
+           intercepted and merged here:
+             - answer    is taken from the first payload whose locate_answer()
+                         returns non-empty text (the 正文 payload);
+             - citations are taken from the first payload whose locate_citations()
+                         returns a non-empty list (the 搜索结果 payload).
+           Order in the list does not matter — each field is resolved by which
+           payload actually carries it. raw_response keeps the full list so the
+           original packets are auditable.
+
+        If web_search/联网搜索 is OFF, the platform simply emits no search
+        payload (or an empty citation list); citations then fall back to []
+        without raising — this is the intended "联网开关关闭" semantics.
         """
+        if isinstance(payload, list):
+            return self._build_from_payloads(payload, latency_ms)
+
         answer = self.locate_answer(payload)
         raw_cits = self.locate_citations(payload)
         citations = parse_citations(raw_cits, self.field_map)
@@ -108,6 +132,47 @@ class WebChannel(BaseChannel):
             content=answer,
             citations=citations,
             raw_response=payload,
+            latency_ms=latency_ms,
+            status="ok",
+        )
+
+    def _build_from_payloads(
+        self,
+        payloads: "list[dict]",
+        latency_ms: int = 0,
+    ) -> LLMResponse:
+        """Merge multiple intercepted payloads into one LLMResponse (doc §24).
+
+        Resolves answer and citations independently across the payloads so the
+        caller does not need to know which request carried which field. Empty
+        results are tolerated (e.g. 联网搜索 关闭 → no citation payload).
+        """
+        answer = ""
+        for p in payloads:
+            if not isinstance(p, dict):
+                continue
+            text = self.locate_answer(p)
+            if text:
+                answer = text
+                break
+
+        raw_cits: list[dict] = []
+        for p in payloads:
+            if not isinstance(p, dict):
+                continue
+            found = self.locate_citations(p)
+            if found:
+                raw_cits = found
+                break
+
+        citations = parse_citations(raw_cits, self.field_map)
+        return LLMResponse(
+            provider=self.provider_name,
+            channel="web",
+            model=None,
+            content=answer,
+            citations=citations,
+            raw_response={"payloads": payloads},
             latency_ms=latency_ms,
             status="ok",
         )

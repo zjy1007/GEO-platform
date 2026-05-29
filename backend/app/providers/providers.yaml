@@ -52,18 +52,19 @@ providers:
   yuanbao:
     type: web_only
     channels: [web]
-    note: 腾讯元宝 ≠ 混元 API；网页/App 账号池采集
+    note: 腾讯元宝 ≠ 混元 API；网页/App 账号池采集，单请求返回正文+引用
   nami:
     type: web_only
     channels: [web]
-    note: 纳米AI（360 搜索 App），账号池采集
+    note: 纳米AI（360 搜索 App），账号池采集；搜索结果与正文可能分两请求，需都拦
   doubao:
     type: web_only
     channels: [web]
-    note: 联网豆包 App 体验，账号池采集（方舟 API 仅作分析兜底，需 endpoint id）
+    note: 联网豆包 App 体验，账号池采集；搜索结果与正文分两请求需都拦（方舟 API 仅作分析兜底、无引用，需 endpoint id ep-xxxx）
 
 # Account-pool per-account daily quotas (web channel, doc §14).
 account_quota:
   deepseek_web: { per_account_daily: 40 }
   yuanbao_web: { per_account_daily: 30 }
+  nami_web: { per_account_daily: 30 }     # 补齐 nami 账号池配额
   doubao_web: { per_account_daily: 30 }

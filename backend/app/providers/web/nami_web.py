@@ -1,13 +1,46 @@
 """纳米AI web channel (P2.4).
 
 Payload structure to be determined via DevTools packet capture against
-nano.baidu.com (or current nami domain) with 联网搜索 enabled.
+the 纳米AI（360 搜索 App）web/App interface with 联网搜索 enabled.
 
-TODO(抓包核实): capture a live session to confirm field paths for answer
+TODO(真抓包核实): capture a live session to confirm field paths for answer
 text and citation list before enabling in production.
+
+All concrete field locations live in FIELD_PATHS below so they can be patched
+in one place once a real packet is captured. Each entry lists the candidate
+paths tried in order; every path is a placeholder until verified.
+
+Note (doc §24): 纳米AI may also split 搜索结果 and 正文 into two requests; both
+are intercepted and merged via WebChannel.build_response_from_payload([...]).
 """
 from app.providers.base import LLMRequest, LLMResponse
 from app.providers.web_base import WebChannel
+
+# ---------------------------------------------------------------------------
+# Field paths (single source of truth for packet-derived locations).
+# ---------------------------------------------------------------------------
+FIELD_PATHS = {
+    "answer": [
+        ("answer",),             # TODO 真抓包核实: 顶层 answer
+        ("data", "answer"),      # TODO 真抓包核实: data.answer
+        ("data", "content"),     # TODO 真抓包核实: data.content 兜底
+    ],
+    "citations": [
+        ("citations",),          # TODO 真抓包核实: 顶层 citations
+        ("data", "citations"),   # TODO 真抓包核实: data.citations
+        ("data", "searchResults"),  # TODO 真抓包核实: 360 系常用 searchResults
+    ],
+}
+
+
+def _walk(payload: dict, path: tuple) -> object:
+    """Follow a tuple key-chain through nested dicts; return None on any miss."""
+    cur: object = payload
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    return cur
 
 
 class NamiWebChannel(WebChannel):
@@ -15,35 +48,33 @@ class NamiWebChannel(WebChannel):
 
     provider_name = "nami"
 
-    # TODO(抓包核实): update field_map after packet capture confirms citation keys
+    # TODO 真抓包核实: update field_map after packet capture confirms citation keys
     field_map = {
-        "title": "title",
-        "url": "url",
-        "snippet": "desc",
-        "source_name": "source",
+        "title": "title",       # TODO 真抓包核实
+        "url": "url",           # TODO 真抓包核实
+        "snippet": "desc",      # TODO 真抓包核实
+        "source_name": "source",  # TODO 真抓包核实
     }
 
     def locate_answer(self, payload: dict) -> str:
-        """Extract answer text from the Nami SSE payload.
-
-        Suspected structure (TODO: verify via packet capture):
-          {"answer": "..."} or {"data": {"answer": "..."}}
-        """
-        if "answer" in payload:
-            return payload["answer"] or ""
-        data = payload.get("data") or {}
-        return data.get("answer") or ""
+        """Extract answer text by walking FIELD_PATHS['answer'] candidates."""
+        for path in FIELD_PATHS["answer"]:
+            val = _walk(payload, path)
+            if isinstance(val, str) and val:
+                return val
+        return ""
 
     def locate_citations(self, payload: dict) -> list[dict]:
-        """Extract raw citation list from the Nami SSE payload.
+        """Extract raw citation list by walking FIELD_PATHS['citations'].
 
-        Suspected structure (TODO: verify via packet capture):
-          {"citations": [...]} or {"data": {"citations": [...]}}
+        Returns [] when 联网搜索 is off — intended "联网开关关闭 → citations 为空"
+        fallback semantics.
         """
-        if "citations" in payload:
-            return payload["citations"] or []
-        data = payload.get("data") or {}
-        return data.get("citations") or []
+        for path in FIELD_PATHS["citations"]:
+            val = _walk(payload, path)
+            if isinstance(val, list):
+                return val
+        return []
 
     async def _drive_session(self, request: LLMRequest) -> LLMResponse:
         """Drive a Playwright session against the Nami AI web interface.
