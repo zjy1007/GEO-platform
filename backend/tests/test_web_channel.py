@@ -62,20 +62,39 @@ def deepseek_payload_delta():
     }
 
 
+# 真包派生 SSE 片段（结构对齐 2026-06-01 抓包：data: {...JSON} 多事件 + event:/非JSON行）
+YUANBAO_SSE_REAL = (
+    'data: {"type":"text"}\n'
+    '\n'
+    'event: speech_type\n'
+    'data: status\n'
+    '\n'
+    'data: {"type":"step","msg":"正在搜索资料","scene":"ai_search_light"}\n'
+    '\n'
+    'data: {"type":"text","msg":"杭州"}\n'
+    '\n'
+    'data: {"type":"text","msg":"滨江有多家不错的"}\n'
+    '\n'
+    'data: {"type":"text","msg":"宠物医院。"}\n'
+    '\n'
+    'event: speech_type\n'
+    'data: search_with_text\n'
+    '\n'
+    'data: {"type":"searchGuid","title":"引用","sourceType":"","docs":['
+    '{"index":1,"docId":"d-001","title":"杭州宠物医院推荐","url":"https://www.example-pet.com/hz",'
+    '"sourceType":"webpage","quote":"滨江有松子宠物医院等","web_site_name":"示例宠物网","publish_time":"2025-01-01"},'
+    '{"index":2,"docId":"d-002","title":"来自腾讯地图的参考资料","url":"",'
+    '"sourceType":"plugin","quote":"在杭州滨江周边..."}'
+    '],"citations":[]}\n'
+    '\n'
+)
+
+
 @pytest.fixture
 def yuanbao_payload():
-    """Mock 腾讯元宝 SSE payload."""
-    return {
-        "reply": "元宝对该商家的评价是优质服务商。",
-        "references": [
-            {
-                "title": "医美机构评测",
-                "url": "https://www.meiti.com/review/123",
-                "abstract": "综合评测数据",
-                "sourceName": "美态网",
-            }
-        ],
-    }
+    """真包派生 normalized payload (parse_sse 转换后的形态)。"""
+    from app.providers.web.yuanbao_web import parse_sse
+    return parse_sse(YUANBAO_SSE_REAL)
 
 
 @pytest.fixture
@@ -288,16 +307,39 @@ def test_deepseek_build_response_domain_normalization(deepseek_payload):
 # YuanbaoWebChannel
 # ---------------------------------------------------------------------------
 
+def test_yuanbao_parse_sse_extracts_answer_and_docs():
+    """parse_sse 真包结构验证：聚合 type=text 的 msg、收集 searchGuid 的 docs。"""
+    from app.providers.web.yuanbao_web import parse_sse
+    out = parse_sse(YUANBAO_SSE_REAL)
+    assert out["answer"] == "杭州滨江有多家不错的宠物医院。"
+    assert len(out["docs"]) == 2
+    assert out["docs"][0]["title"] == "杭州宠物医院推荐"
+    assert out["docs"][1]["sourceType"] == "plugin"  # 第二条是地图 plugin
+    assert out["citations"] == []  # 本例 footnote 编号引用为空，符合预期
+
+
+def test_yuanbao_parse_sse_skips_non_json_data_lines():
+    """`data: status` / `data: search_with_text` 这种非 JSON 行不应导致解析失败。"""
+    from app.providers.web.yuanbao_web import parse_sse
+    out = parse_sse('data: status\n\ndata: search_with_text\n\ndata: {"type":"text","msg":"OK"}\n\n')
+    assert out["answer"] == "OK"
+
+
 def test_yuanbao_locate_answer(yuanbao_payload):
     ch = YuanbaoWebChannel()
-    assert "元宝" in ch.locate_answer(yuanbao_payload)
+    assert "杭州" in ch.locate_answer(yuanbao_payload)
+    assert "宠物医院" in ch.locate_answer(yuanbao_payload)
 
 
 def test_yuanbao_locate_citations(yuanbao_payload):
     ch = YuanbaoWebChannel()
     raw = ch.locate_citations(yuanbao_payload)
-    assert len(raw) == 1
-    assert raw[0]["sourceName"] == "美态网"
+    assert len(raw) == 2
+    # webpage 类：web_site_name 已就位
+    assert raw[0]["web_site_name"] == "示例宠物网"
+    # plugin 类：sourceType=plugin 不应被回填进 web_site_name
+    assert raw[1]["sourceType"] == "plugin"
+    assert not raw[1].get("web_site_name")
 
 
 def test_yuanbao_build_response(yuanbao_payload):
@@ -305,9 +347,20 @@ def test_yuanbao_build_response(yuanbao_payload):
     resp = ch.build_response_from_payload(yuanbao_payload)
     assert resp.provider == "yuanbao"
     assert resp.channel == "web"
-    assert len(resp.citations) == 1
-    assert resp.citations[0].source_name == "美态网"
-    assert resp.citations[0].domain == "meiti.com"
+    assert "杭州" in resp.content and "宠物医院" in resp.content
+    assert len(resp.citations) == 2
+    # 普通网页引用
+    c0 = resp.citations[0]
+    assert c0.title == "杭州宠物医院推荐"
+    assert c0.url == "https://www.example-pet.com/hz"
+    assert c0.domain == "example-pet.com"  # extract_domain 会剥 www.
+    assert c0.source_name == "示例宠物网"
+    assert c0.snippet == "滨江有松子宠物医院等"
+    # 地图 plugin：url 为空、source_name 不被强行赋值（plugin 不回填）
+    c1 = resp.citations[1]
+    assert c1.title == "来自腾讯地图的参考资料"
+    assert not c1.domain
+    assert c1.source_name is None
 
 
 # ---------------------------------------------------------------------------

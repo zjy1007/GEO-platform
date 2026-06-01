@@ -30,3 +30,6 @@ miniodata/
 
 # playwright account profiles (account pool, P2 — never commit login state)
 backend/.playwright_profiles/
+
+# capture / bootstrap 临时产物（含 cookie 等敏感内容，绝不入库）
+.tmp/
